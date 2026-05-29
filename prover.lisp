@@ -1,5 +1,3 @@
-;;; nd-prover-standalone-refactored.lisp
-;;;
 ;;; Single-purpose classical propositional natural-deduction prover.
 ;;; Usage:
 ;;;
