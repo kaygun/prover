@@ -1,7 +1,7 @@
 ;;; Single-purpose classical propositional natural-deduction prover.
 ;;; Usage:
 ;;;
-;;;   sbcl --script nd-prover-standalone-refactored.lisp problem.nd
+;;;   sbcl --script prover.lisp problem.nd
 ;;;
 ;;; The input file contains zero or more premise lines, then a separator line
 ;;; consisting of at least five hyphens, then exactly one conclusion line.
