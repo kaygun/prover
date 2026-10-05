@@ -56,7 +56,7 @@ sbcl --script tests/run.lisp
 python3 tests/test_cli.py
 ```
 
-The Lisp suite covers parser round trips, invalid rule applications and subproof citations, checked proofs for every rule, all bundled examples, and truth-table validation of generated proofs. The Python suite uses only the standard library and checks the actual CLI, exit codes, input errors, and invocation from another directory.
+The Lisp suite covers parser round trips, invalid rule applications and subproof citations, checked proofs for every rule, derived intermediate formulas, scoped reuse of shared derivations, all bundled examples, and truth-table validation of generated proofs. The Python suite uses only the standard library and checks the actual CLI, exit codes, input errors, proof size for shared derivations, and invocation from another directory.
 
 ## Formula syntax
 
@@ -242,7 +242,7 @@ The dynamic variable `*classical*` controls whether the search procedure may use
 
 ## Search strategy
 
-The search procedure constructs proof terms before any lines are printed.  A proof term is a tree whose nodes are rule applications, for example `:imp-intro`, `:imp-elim`, `:or-elim`, `:not-elim`, and `:raa`.  The term language is intentionally close to the natural-deduction rules listed above.
+The search procedure constructs proof terms before any lines are printed.  Proof terms form a directed acyclic graph whose nodes are rule applications, for example `:imp-intro`, `:imp-elim`, `:or-elim`, `:not-elim`, and `:raa`; several applications may share a premise or derived term.  The term language is intentionally close to the natural-deduction rules listed above.
 
 The central function is `prove-term`.  It attempts to build a natural-deduction term for a target formula from a finite context.  The search is bounded by `*default-depth*`, which is currently `60`.  The bound is not part of the logic; the bound is a termination safeguard.
 
@@ -266,8 +266,11 @@ After saturation, the search tries the following proof patterns in order:
 5. prove the target by first proving a conjunction of which the target is a component;
 6. apply disjunction elimination to an available disjunction;
 7. apply right-introduction rules for conjunction, implication, negation, biconditional, and disjunction;
-8. derive bottom and then use explosion;
-9. if classical reasoning is enabled, use RAA.
+8. prove the antecedent of an available implication, add its consequence to the context, and retry the target;
+9. derive bottom and then use explosion;
+10. if classical reasoning is enabled, use RAA.
+
+Step 8 allows derived intermediate formulas to participate in further eliminations. For example, from `(P -> P) -> (Q -> R)` and `Q`, the prover first establishes `P -> P`, derives `Q -> R`, and then obtains `R`. Both proving the antecedent and retrying the target use a smaller remaining depth.
 
 The search uses two hash tables.  `ACTIVE` records sequents already on the current recursive call stack, preventing cyclic descent.  `FAILED` records unsuccessful searches at a given remaining depth, preventing repeated exploration of the same failed branch. These are heuristic pruning mechanisms, not certificates of unprovability. Search keys contain the reasoning mode, the structural target formula, and a sorted structural signature of the current context; atom case, context order, and duplicate formulas do not affect the key.
 
@@ -275,7 +278,7 @@ The search is sound relative to the checker, because any proof term that reaches
 
 ## Linearization into Fitch-style proofs
 
-The search procedure returns a tree-shaped proof term.  The function `linearize-proof` turns this tree into a numbered Fitch-style proof.
+The search procedure returns a proof term that may share subderivations.  The function `linearize-proof` turns it into a numbered Fitch-style proof. It reuses a previously emitted term only in the same or an enclosing scope. Each subproof has its own term-to-line table, so a derivation inside a closed branch cannot be reused in a sibling branch or outside that branch. Reusing accessible lines avoids exponential duplication when the same derivation is cited repeatedly.
 
 A proof line stores five pieces of data:
 

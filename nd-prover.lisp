@@ -346,6 +346,7 @@ semantic refutation."
                                 (prove-by-conjunction-elimination target context fuel)
                                 (prove-by-disjunction-elimination target context fuel)
                                 (prove-by-introduction target context fuel)
+                                (prove-by-forward-implication target context fuel)
                                 (prove-by-ex-falso target context fuel)
                                 (prove-by-raa target context fuel)))
                    (remhash key active))
@@ -464,6 +465,23 @@ semantic refutation."
              (unless (bot-p target)
                (let ((bottom (prove +bot+ context (1- fuel))))
                  (and bottom (make-term :bot-elim target bottom)))))
+           (prove-by-forward-implication (target context fuel)
+             ;; A derived consequence may need further eliminations before it
+             ;; yields TARGET, e.g. (P -> P) -> (Q -> R), Q |- R.
+             (first-result
+              (lambda (item)
+                (let ((formula (entry-formula item)))
+                  (when (and (impl-p formula)
+                             (not (find-entry (impl-right formula) context)))
+                    (let ((antecedent (prove (impl-left formula) context (1- fuel))))
+                      (when antecedent
+                        (prove target
+                               (cons (entry (impl-right formula)
+                                            (make-term :imp-elim (impl-right formula)
+                                                       (entry-term item) antecedent))
+                                     context)
+                               (1- fuel)))))))
+              context))
            (prove-by-raa (target context fuel)
              (when (and classical (not (bot-p target)))
                (let* ((assumption (fresh-assumption (neg target)))
@@ -501,8 +519,12 @@ semantic refutation."
     (let ((line (aref (proof-lines proof) (1- number))))
       (and (= number (proof-line-number line)) line))))
 
+(defun find-term-line (term environment)
+  "Find an emitted term in this scope or an enclosing scope."
+  (loop for scope in environment thereis (gethash term scope)))
+
 (defun available-term-line (term environment)
-  (or (cdr (assoc term environment :test #'eq))
+  (or (find-term-line term environment)
       (error "Proof term ~S is not available in the current scope." term)))
 
 (defun line-at-current-depth (proof line-number)
@@ -522,14 +544,16 @@ semantic refutation."
 
 (defun linearize-subproof (proof assumption body environment)
   "Linearize BODY under ASSUMPTION.  Return the assumption and endpoint lines."
-  (let (assumption-line endpoint-line)
+  (let ((environment (cons (make-hash-table :test #'eq) environment))
+        assumption-line endpoint-line)
     (setf endpoint-line
           (with-subproof (proof)
             (setf assumption-line
                   (emit-line proof (term-formula assumption) "AS" nil))
+            (setf (gethash assumption (first environment)) assumption-line)
             (line-at-current-depth
              proof
-             (linearize-term body proof (acons assumption assumption-line environment)))))
+             (linearize-term body proof environment))))
     (values assumption-line endpoint-line)))
 
 (defun linearize-discharged-rule (term proof environment rule)
@@ -539,7 +563,7 @@ semantic refutation."
       (emit-line proof (term-formula term) rule
                  (list assumption-line endpoint-line)))))
 
-(defun linearize-term (term proof environment)
+(defun emit-term (term proof environment)
   (ecase (term-kind term)
     ((:premise :assumption)
      (available-term-line term environment))
@@ -610,12 +634,19 @@ semantic refutation."
     (:raa
      (linearize-discharged-rule term proof environment "RAA"))))
 
+(defun linearize-term (term proof environment)
+  ;; Search produces shared derivations.  Emit each term once per accessible
+  ;; scope; subproof-local tables are discarded when their subproof closes.
+  (or (find-term-line term environment)
+      (setf (gethash term (first environment))
+            (emit-term term proof environment))))
+
 (defun linearize-proof (premise-entries root-term)
   (let ((proof (make-proof))
-        (environment nil))
+        (environment (list (make-hash-table :test #'eq))))
     (dolist (premise premise-entries)
       (let ((line (emit-line proof (entry-formula premise) "PR" nil)))
-        (push (cons (entry-term premise) line) environment)))
+        (setf (gethash (entry-term premise) (first environment)) line)))
     (let ((conclusion-line (linearize-term root-term proof environment)))
       ;; The goal can be an earlier premise, with unrelated premises after it.
       (unless (= conclusion-line (proof-counter proof))

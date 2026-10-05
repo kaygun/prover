@@ -90,6 +90,33 @@ class CommandLineTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("P → P", result.stdout.splitlines()[-1])
 
+    def test_derived_eliminations(self):
+        cases = [
+            "(P -> P) -> (Q -> R)\nQ\n-----\nR\n",
+            "(P -> P) -> (Q v R)\nQ -> S\nR -> S\n-----\nS\n",
+            "(P -> P) -> (Q iff R)\nQ\n-----\nR\n",
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            problem = Path(directory) / "intermediate.nd"
+            for contents in cases:
+                with self.subTest(problem=contents):
+                    problem.write_text(contents)
+                    result = self.run_cli(problem)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stderr, "")
+                    self.assertIn(contents.splitlines()[-1], result.stdout.splitlines()[-1])
+
+    def test_shared_derivations(self):
+        n = 12
+        premises = ["P0", *(f"P{i} -> (P{i} -> P{i + 1})" for i in range(n))]
+        with tempfile.TemporaryDirectory() as directory:
+            problem = Path(directory) / "chain.nd"
+            problem.write_text("\n".join([*premises, "-----", f"P{n}"]))
+            result = self.run_cli(problem)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stderr, "")
+            self.assertLessEqual(len(result.stdout.splitlines()), 1 + 3 * n)
+
     def test_library_load_does_not_exit(self):
         result = subprocess.run(
             [
